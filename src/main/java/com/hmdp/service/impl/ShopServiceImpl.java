@@ -7,6 +7,7 @@ import com.hmdp.dto.Result;
 import com.hmdp.entity.Shop;
 import com.hmdp.mapper.ShopMapper;
 import com.hmdp.service.IShopService;
+import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -36,33 +37,47 @@ public class ShopServiceImpl implements IShopService {
 
     @Override
     public Result queryShopById(Long id) {
+        Shop shop = queryWithPathThrough(id);
+        if (shop == null) {
+            return Result.fail("店铺信息不存在");
+        }
+
+        return Result.ok(shop);
+
+
+    }
+
+    private Shop queryWithMutex(Long id) {
         //从redis中尝试查数据
         String cachedShop = stringRedisTemplate.opsForValue().get(CACHE_SHOP_KEY + id);
 
         if (StrUtil.isNotBlank(cachedShop)) {
             //命中，直接返回
             Shop shop = JSONUtil.toBean(cachedShop, Shop.class);
-            return Result.ok(shop);
+            return shop;
         }
         //如果命中了缓存空数据，则返回店铺信息不存在（解决缓存穿透）
         if ("".equals(cachedShop)) {
-            return Result.fail("店铺信息不存在（命中了缓存空数据）");
+            //return Result.fail("店铺信息不存在（命中了缓存空数据）");
+            return null;
         }
 
         //未命中，先尝试获取锁
-        Shop shop;
+        Shop shop = null;
         try {
             //没获取到锁，等待一会，然后重新去redis缓存尝试获取数据
             if (!tryLock(LOCK_SHOP_KEY + id)) {
                 Thread.sleep(50);//毫秒
-                return queryShopById(id); //这个return,在这里写不写都一样  递归中，如果只是为了重复执行，不一定return 但是递归的结果想被上一层用到，那肯定得return对吧
+                return queryWithMutex(id); //这个return,在这里写不写都一样  递归中，如果只是为了重复执行，不一定return 但是递归的结果想被上一层用到，那肯定得return对吧
             }
             //取到锁了，从数据库中获取数据
             shop = shopMapper.queryShopById(id);
+            //模拟数据库延迟
+            Thread.sleep(200);//这个单位是毫秒
             if (shop == null) {
                 //如果数据库也没有，缓存空到redis，解决缓存穿透
                 stringRedisTemplate.opsForValue().set(CACHE_SHOP_KEY + id, "", CACHE_NULL_TTL, TimeUnit.MINUTES);
-                return Result.fail("数据不存在！");
+                return null;
             }
             //将查询到的数据添加到redis缓存
             stringRedisTemplate.opsForValue().set(CACHE_SHOP_KEY + id, JSONUtil.toJsonStr(shop), CACHE_SHOP_TTL, TimeUnit.MINUTES);
@@ -72,8 +87,64 @@ public class ShopServiceImpl implements IShopService {
         } finally {
             unlock(LOCK_SHOP_KEY + id);
         }
-        return Result.ok(shop);
+        //将查询到的数据添加到redis缓存
+        stringRedisTemplate.opsForValue().set(CACHE_SHOP_KEY + id, JSONUtil.toJsonStr(shop), CACHE_SHOP_TTL, TimeUnit.MINUTES);
+        return shop;
 
+    }
+
+
+    /**
+     * 解决缓存穿透方案（缓存一个“”（空））
+     *
+     * @param id
+     * @return
+     */
+    private Shop queryWithPathThrough(Long id) {
+
+        //从redis中尝试查数据
+        String cachedShop = stringRedisTemplate.opsForValue().get(CACHE_SHOP_KEY + id);
+
+        if (StrUtil.isNotBlank(cachedShop)) {
+            //命中，直接返回
+            Shop shop = JSONUtil.toBean(cachedShop, Shop.class);
+            return shop;
+        }
+        //如果命中了缓存空数据，则返回店铺信息不存在（解决缓存穿透）
+        if ("".equals(cachedShop)) {
+            //return Result.fail("店铺信息不存在（命中了缓存空数据）");
+            return null;
+        }
+
+        //未命中，从数据库中查询数据
+        Shop shop = shopMapper.queryShopById(id);
+        if (shop == null) {
+            //如果数据库也没有，缓存空到redis，解决缓存穿透
+            stringRedisTemplate.opsForValue().set(CACHE_SHOP_KEY + id, "", CACHE_NULL_TTL, TimeUnit.MINUTES);
+            //return Result.fail("数据不存在！");
+            return null;
+        }
+        //将查询到的数据添加到redis缓存
+        stringRedisTemplate.opsForValue().set(CACHE_SHOP_KEY + id, JSONUtil.toJsonStr(shop), CACHE_SHOP_TTL, TimeUnit.MINUTES);
+        return shop;
+    }
+
+    /**
+     * 解决缓存击穿问题，用互斥锁  上锁（setNx 不存在，才能set进去）
+     * @param key
+     * @return
+     */
+    private boolean tryLock(String key) {
+        Boolean isLocked = stringRedisTemplate.opsForValue().setIfAbsent(key, "", LOCK_SHOP_TTL, TimeUnit.SECONDS);
+        return BooleanUtil.isTrue(isLocked);//涉及拆装箱，所以需要用hutool包处理一下
+    }
+
+    /**
+     * 解决缓存击穿问题，互斥锁  释放锁（删除对应key）
+     * @param key
+     */
+    private void unlock(String key) {
+        stringRedisTemplate.delete(key);
     }
 
     /**
@@ -112,23 +183,4 @@ public class ShopServiceImpl implements IShopService {
         List<Shop> shops = shopMapper.queryShopByPage(index, pageSize, typeId);
         return Result.ok(shops);
     }
-
-    /**
-     * 解决缓存击穿问题，用互斥锁  上锁（setNx 不存在，才能set进去）
-     * @param key
-     * @return
-     */
-    private boolean tryLock(String key) {
-        Boolean isLocked = stringRedisTemplate.opsForValue().setIfAbsent(key, "", LOCK_SHOP_TTL, TimeUnit.SECONDS);
-        return BooleanUtil.isTrue(isLocked);
-    }
-
-    /**
-     * 解决缓存击穿问题，互斥锁  释放锁（删除对应key）
-     * @param key
-     */
-    private void unlock(String key) {
-        stringRedisTemplate.delete(key);
-    }
-
 }
