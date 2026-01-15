@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.hmdp.mapper.ShopMapper">
+    <update id="updateShop">
+        update tb_shop
+        <set>
+            <!-- 必填字段：需要非空判断 -->
+            <if test="name != null and name != ''">name = #{name},</if>
+            <if test="typeId != null">type_id = #{typeId},</if>
+            <if test="images != null and images != ''">images = #{images},</if>
+            <if test="address != null and address != ''">address = #{address},</if>
+            <if test="x != null">x = #{x},</if>
+            <if test="y != null">y = #{y},</if>
+            <if test="sold != null">sold = #{sold},</if>
+            <if test="comments != null">comments = #{comments},</if>
+            <if test="score != null">score = #{score},</if>
+
+            <!-- 可选字段：可以直接设置，允许设置为 null -->
+            area = #{area},
+            avg_price = #{avgPrice},
+            open_hours = #{openHours},
+            <!-- update_time 会自动更新，不需要设置 -->
+        </set>
+        where id = #{id}
+    </update>
+
+    <!--  根据id查询商铺信息  -->
+    <select id="queryShopById" resultType="com.hmdp.entity.Shop">
+        select * from tb_shop where id = #{id}
+    </select>
+    <select id="queryShopByPage" resultType="com.hmdp.entity.Shop">
+        select * from tb_shop where type_id = #{typeId} limit #{index} , #{pageSize}
+    </select>
+
+</mapper>
