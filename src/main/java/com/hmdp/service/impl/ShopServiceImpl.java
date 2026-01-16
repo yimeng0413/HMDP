@@ -2,18 +2,23 @@ package com.hmdp.service.impl;
 
 import cn.hutool.core.util.BooleanUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.Shop;
 import com.hmdp.mapper.ShopMapper;
 import com.hmdp.service.IShopService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.hmdp.utils.RedisData;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import static com.hmdp.utils.RedisConstants.*;
@@ -22,9 +27,6 @@ import static com.hmdp.utils.RedisConstants.*;
  * <p>
  * 服务实现类
  * </p>
- *
- * @author 虎哥
- * @since 2021-12-22
  */
 @Service
 public class ShopServiceImpl implements IShopService {
@@ -35,9 +37,19 @@ public class ShopServiceImpl implements IShopService {
     @Autowired
     ShopMapper shopMapper;
 
+    //线程池，用来在逻辑过期方案中异步从数据库取出数据并写入redis
+    private static final ExecutorService CACHE_REBUILD_EXECUTOR = Executors.newFixedThreadPool(10);
+
+    /**
+     * 根据ID查询店铺信息
+     *
+     * @param id
+     * @return
+     */
     @Override
     public Result queryShopById(Long id) {
-        Shop shop = queryWithMutex(id);
+//        Shop shop = queryWithMutex(id);
+        Shop shop = queryWithLogicalExpire(id);
         if (shop == null) {
             return Result.fail("店铺信息不存在");
         }
@@ -47,7 +59,76 @@ public class ShopServiceImpl implements IShopService {
     }
 
     /**
+     * 逻辑过期解决缓存击穿  将商铺信息封装成RedisData（带逻辑过期时间）存到redis（这个方案默认这种热点KEY一直是存在与redis中的）
+     *
+     * @param id
+     * @param expireTime
+     */
+    public void saveShopDataToRedis(Long id, Long expireTime) {
+        //从数据库查shop信息
+        Shop shop = shopMapper.queryShopById(id);
+        if (shop == null) {
+            return;
+        }
+        /*try {
+            //模拟延迟
+            Thread.sleep(200);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }*/
+        //将shop信息封装到redisData对象（这里除了shop信息，还加了一个逻辑过期时间，这样做的目的是不侵入原代码）
+        RedisData redisData = new RedisData();
+        redisData.setData(shop);
+        redisData.setExpireTime(LocalDateTime.now().plusSeconds(expireTime));
+        //将redisData存到redis中
+        stringRedisTemplate.opsForValue().set(CACHE_SHOP_KEY + id, JSONUtil.toJsonStr(redisData));
+    }
+
+    /**
+     * 逻辑过期方案解决缓存击穿问题
+     *
+     * @param id
+     * @return
+     */
+    private Shop queryWithLogicalExpire(Long id) {
+        //从redis中尝试查数据
+        String cachedShop = stringRedisTemplate.opsForValue().get(CACHE_SHOP_KEY + id);
+        //理论上在这种方案中默认是一定能拿到缓存的，但是以防万一，这里先做个判断
+        if (StrUtil.isBlank(cachedShop)) {
+            return null;
+        }
+        //从redis获取封装的数据后，从这个封装的数据中取出店铺数据和过期时间
+        RedisData redisData = JSONUtil.toBean(cachedShop, RedisData.class);
+        LocalDateTime expireTime = redisData.getExpireTime();
+        //这里必须先转成JSONObject,然后再用hutool的toBean转成shop 不然会报错 ClassCastException
+        JSONObject data = (JSONObject) redisData.getData();
+        Shop cacheShop = JSONUtil.toBean(data, Shop.class);
+        //如果没过期，直接返回这个数据就行
+        if (expireTime.isAfter(LocalDateTime.now())) {
+            return cacheShop;
+        }
+        //过期了，就开启一个线程，让他去执行获取数据库数据并且更新缓存的操作（需要获取锁）
+        if (tryLock(LOCK_SHOP_KEY)) {
+            //拿到锁了，那么就去数据库查数据(开启一个线程）
+            CACHE_REBUILD_EXECUTOR.submit(() -> {
+                        try {
+                            //重建缓存
+                            this.saveShopDataToRedis(id, 20L);
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        } finally {
+                            unlock(LOCK_SHOP_KEY);
+                        }
+                    }
+            );
+        }
+        //无论拿没拿到锁，都返回脏数据（因为这个取数据重构缓存是异步的过程）
+        return cacheShop;
+    }
+
+    /**
      * 互斥锁解决缓存击穿问题（部分热点key）
+     *
      * @param id
      * @return
      */
@@ -77,7 +158,7 @@ public class ShopServiceImpl implements IShopService {
             //取到锁了，从数据库中获取数据
             shop = shopMapper.queryShopById(id);
             //模拟数据库延迟
-            Thread.sleep(200);//这个单位是毫秒
+            //Thread.sleep(200);//这个单位是毫秒
             if (shop == null) {
                 //如果数据库也没有，缓存空到redis，解决缓存穿透
                 stringRedisTemplate.opsForValue().set(CACHE_SHOP_KEY + id, "", CACHE_NULL_TTL, TimeUnit.MINUTES);
@@ -135,6 +216,7 @@ public class ShopServiceImpl implements IShopService {
 
     /**
      * 解决缓存击穿问题，用互斥锁  上锁（setNx 不存在，才能set进去）
+     *
      * @param key
      * @return
      */
@@ -145,6 +227,7 @@ public class ShopServiceImpl implements IShopService {
 
     /**
      * 解决缓存击穿问题，互斥锁  释放锁（删除对应key）
+     *
      * @param key
      */
     private void unlock(String key) {
