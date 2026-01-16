@@ -9,6 +9,7 @@ import com.hmdp.entity.Shop;
 import com.hmdp.mapper.ShopMapper;
 import com.hmdp.service.IShopService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.hmdp.utils.CacheClient;
 import com.hmdp.utils.RedisData;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -37,6 +38,9 @@ public class ShopServiceImpl implements IShopService {
     @Autowired
     ShopMapper shopMapper;
 
+    @Autowired
+    CacheClient cacheClient;
+
     //线程池，用来在逻辑过期方案中异步从数据库取出数据并写入redis
     private static final ExecutorService CACHE_REBUILD_EXECUTOR = Executors.newFixedThreadPool(10);
 
@@ -49,13 +53,13 @@ public class ShopServiceImpl implements IShopService {
     @Override
     public Result queryShopById(Long id) {
 //        Shop shop = queryWithMutex(id);
-        Shop shop = queryWithLogicalExpire(id);
+//        Shop shop = queryWithLogicalExpire(id);
+        Shop shop = cacheClient.queryWithLogicalExpire(CACHE_SHOP_KEY, id, Shop.class, (x) -> shopMapper.queryShopById(x), CACHE_SHOP_TTL, TimeUnit.MINUTES);
+
         if (shop == null) {
             return Result.fail("店铺信息不存在");
         }
-
         return Result.ok(shop);
-
     }
 
     /**
@@ -146,7 +150,6 @@ public class ShopServiceImpl implements IShopService {
             //return Result.fail("店铺信息不存在（命中了缓存空数据）");
             return null;
         }
-
         //未命中，先尝试获取锁
         Shop shop = null;
         try {
