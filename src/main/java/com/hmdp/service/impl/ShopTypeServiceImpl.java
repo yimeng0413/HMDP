@@ -37,7 +37,7 @@ public class ShopTypeServiceImpl implements IShopTypeService {
         //尝试从redis中取出数据 (List)
         List<String> objs = stringRedisTemplate.opsForList().range(CACHE_SHOPTYPE_KEY, 0, -1);
         //这种从redis取的，如果没命中，都是null
-        if (objs!=null) {
+        if (!objs.isEmpty()) {
             //命中，直接将数据返回给前端
             List<ShopType> shopTypes = objs.stream().map(s -> JSONUtil.toBean(s, ShopType.class)).collect(Collectors.toList());
             return Result.ok(shopTypes);
