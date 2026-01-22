@@ -12,6 +12,6 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 public interface UserMapper {
 
     User selectUser(String phone);
-    void insertUser(User user);
+    int insertUser(User user);
 
 }
