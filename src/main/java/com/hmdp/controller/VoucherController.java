@@ -13,8 +13,6 @@ import javax.annotation.Resource;
  *  前端控制器
  * </p>
  *
- * @author 虎哥
- * @since 2021-12-22
  */
 @RestController
 @RequestMapping("/voucher")
@@ -30,8 +28,8 @@ public class VoucherController {
      */
     @PostMapping
     public Result addVoucher(@RequestBody Voucher voucher) {
-        voucherService.save(voucher);
-        return Result.ok(voucher.getId());
+        Result result = voucherService.addVoucher(voucher);
+        return result;
     }
 
     /**
@@ -41,8 +39,8 @@ public class VoucherController {
      */
     @PostMapping("seckill")
     public Result addSeckillVoucher(@RequestBody Voucher voucher) {
-        voucherService.addSeckillVoucher(voucher);
-        return Result.ok(voucher.getId());
+        Result result = voucherService.addSeckillVoucher(voucher);
+        return result;
     }
 
     /**
@@ -52,6 +50,7 @@ public class VoucherController {
      */
     @GetMapping("/list/{shopId}")
     public Result queryVoucherOfShop(@PathVariable("shopId") Long shopId) {
-       return voucherService.queryVoucherOfShop(shopId);
+        Result result = voucherService.queryVoucherOfShop(shopId);
+        return result;
     }
 }
