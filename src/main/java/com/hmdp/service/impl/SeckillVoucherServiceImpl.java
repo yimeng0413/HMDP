@@ -32,6 +32,5 @@ public class SeckillVoucherServiceImpl implements ISeckillVoucherService {
     public int decreaseSeckillVoucherStock(Long voucherId) {
         int updatedRows = seckillVoucherMapper.decreaseSeckillVoucherStock(voucherId);
         return updatedRows;
-
     }
 }
