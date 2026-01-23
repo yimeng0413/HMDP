@@ -7,7 +7,15 @@
     </insert>
 
     <update id="decreaseSeckillVoucherStock">
-        update tb_seckill_voucher set stock = stock - 1 where voucher_id = #{voucherId}
+
+        <!--这种方案不好，如果stock=?的话，比如并发200只卖出去20多个。（库存有100） -->
+        <!--update tb_seckill_voucher set stock = stock - 1 where voucher_id = #{voucherId} and stock = #{stock} -->
+
+        <!--简单粗暴，直接stock>0就解决问题了！ 核心原因就是因为update是行锁，多个线程进来必须一条一条update -->
+        <!--但是只适用于这种stock -1 这种操作  如果是update一些普通字段，那就得老老实实加个version之类的实现乐观锁了 -->
+        <!--默认的select 是没有锁的 select for update的话 会加行锁  释放锁的时机是事务结束！ 所以要搭配Transaction去使用 -->
+        update tb_seckill_voucher set stock = stock - 1 where voucher_id = #{voucherId} and stock > 0
+
     </update>
 
     <select id="querySeckillVoucherByVoucherId" resultType="com.hmdp.entity.SeckillVoucher">

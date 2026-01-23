@@ -4,6 +4,7 @@ import com.hmdp.dto.Result;
 import com.hmdp.entity.SeckillVoucher;
 import com.hmdp.entity.Voucher;
 import com.hmdp.entity.VoucherOrder;
+import com.hmdp.exception.BusinessException;
 import com.hmdp.mapper.SeckillVoucherMapper;
 import com.hmdp.mapper.VoucherMapper;
 import com.hmdp.mapper.VoucherOrderMapper;
@@ -64,9 +65,11 @@ public class VoucherOrderServiceImpl implements IVoucherOrderService {
             return Result.fail("优惠券库存不足！");
         }
         //库存-1
-        int i = seckillVoucherService.decreaseSeckillVoucherStock(voucherId);
-        if (i == 0) {
-            return Result.fail("优惠券库存不足！");
+//        int updatedRows = seckillVoucherService.decreaseSeckillVoucherStock(voucherId);
+        //乐观锁解决库存超卖问题(stock>0)
+        int updatedRows = seckillVoucherService.decreaseSeckillVoucherStock(voucherId);
+        if (updatedRows == 0) {
+            throw new BusinessException("库存超卖！不允许执行");
         }
         //生成优惠券订单信息
         VoucherOrder voucherOrder = new VoucherOrder();
