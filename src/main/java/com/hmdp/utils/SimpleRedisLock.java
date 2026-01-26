@@ -1,5 +1,6 @@
 package com.hmdp.utils;
 
+import cn.hutool.core.lang.UUID;
 import org.apache.tomcat.jni.Lock;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -22,6 +23,8 @@ public class SimpleRedisLock implements ILock {
 
     String keyPrefix;
 
+    String ID_PREFIX = UUID.randomUUID().toString(true);
+
     public SimpleRedisLock(StringRedisTemplate stringRedisTemplate, String keyPrefix) {
         this.stringRedisTemplate = stringRedisTemplate;
         this.keyPrefix = keyPrefix;
@@ -35,7 +38,8 @@ public class SimpleRedisLock implements ILock {
      */
     @Override
     public boolean tryLock(long timeoutSec) {
-        Boolean result = stringRedisTemplate.opsForValue().setIfAbsent(RedisConstants.LOCK + keyPrefix, Thread.currentThread().getId() + "", timeoutSec, TimeUnit.SECONDS);
+        //改进一下，解决误删key的问题。具体做法是set的时候不光存储当前线程ID，还拼接上UUID（因为不同JVM这个threadId可能会重复）
+        Boolean result = stringRedisTemplate.opsForValue().setIfAbsent(RedisConstants.LOCK + keyPrefix, ID_PREFIX + Thread.currentThread().getId(), timeoutSec, TimeUnit.SECONDS);
         //redis返回的是Boolean包装类 我们方法是boolean 直接拆箱，有可能空指针   所以用这个hutool的封装一下，这个Boolean.TRUE一定不会空指针对吧 然后拿着这个去.equals
         //结果就是： 如果是true，返回ture  如果是false或者null，返回false
         return Boolean.TRUE.equals(result);
@@ -43,6 +47,11 @@ public class SimpleRedisLock implements ILock {
 
     @Override
     public void unlock() {
-        stringRedisTemplate.delete(RedisConstants.LOCK + keyPrefix);
+        String redisValue = stringRedisTemplate.opsForValue().get(RedisConstants.LOCK + keyPrefix);
+        String currentValue = ID_PREFIX + Thread.currentThread().getId();
+        //做了改进，解决key误删问题  删除之前先判断是不是自己的那个key，如果是，才去删除；如果不是，啥都不做
+        if(currentValue.equals(redisValue)){
+            stringRedisTemplate.delete(RedisConstants.LOCK + keyPrefix);
+        }
     }
 }
