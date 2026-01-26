@@ -12,9 +12,11 @@ import com.hmdp.service.ISeckillVoucherService;
 import com.hmdp.service.IVoucherOrderService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisIdWorker;
+import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
 import org.springframework.aop.framework.AopContext;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,6 +38,9 @@ public class VoucherOrderServiceImpl implements IVoucherOrderService {
 
     @Autowired
     VoucherOrderMapper voucherOrderMapper;
+
+    @Autowired
+    StringRedisTemplate stringRedisTemplate;
 
     /**
      * 购买秒杀优惠券（生成优惠券订单）
@@ -71,14 +76,27 @@ public class VoucherOrderServiceImpl implements IVoucherOrderService {
         //intern()方法是去String常量池去找，如果有，返回池子里的字符串的引用；没有的话，把这个String放进常量池，同时返回池子里的引用。
         //这里用了悲观锁：因为这个不是更新，是做了存在check然后insert，不方便用乐观锁
         //（乐观锁核心是检查数据是否发生了变化，你新增一条数据怎么去判断数据发生了变化之类的呀，所以用悲观锁）
-        synchronized (userId.toString().intern()){
-            //这里为啥要用代理对象？ 因为Spring的事务是通过AOP代理实现的。只有经过代理对象调用的方法，事务才会生效。
-            //所以这一步实际做的事情就是：拿到当前线程里的代理对象。只有这个对象调用的方法，才能被AOP拦截到
-            //普通我们是在service某个方法上写@Transactional，然后Controller层直接调service的这个方法，这个时候事务是生效的，为啥？
-            //因为注入到Controller层的不是service对象，而是这个的代理对象！！ 通过这个代理对象去调用了service的具体方法，所以事务生效了！
-            //核心一句话：Spring事务是否生效，取决于：有没有通过代理对象去调用，事务传播行为只有在走代理的情况下才生效
+        //这个synchronized 在分布式会受到挑战！你看他本质是维护的String池子对吧？这个池子关键是一个JVM一个池子，你多个JVM，池子就多个了
+        //也就是通过userId.toString()就锁不住啦！
+        //synchronized (userId.toString().intern()){
+        //改进：不用synchronized，尝试从redis获取锁  保证分布式环境下也可以正常使用,注意这个key具体到userId，这样不同user之间是不会竞争锁
+        SimpleRedisLock voucherOrderLock = new SimpleRedisLock(stringRedisTemplate, "order" + userId);
+        boolean isLocked = voucherOrderLock.tryLock(1200);
+        if (!isLocked) {
+            return Result.fail("获取锁失败，停止线程");
+        }
+        //这里为啥要用代理对象？ 因为Spring的事务是通过AOP代理实现的。只有经过代理对象调用的方法，事务才会生效。
+        //所以这一步实际做的事情就是：拿到当前线程里的代理对象。只有这个对象调用的方法，才能被AOP拦截到
+        //普通我们是在service某个方法上写@Transactional，然后Controller层直接调service的这个方法，这个时候事务是生效的，为啥？
+        //因为注入到Controller层的不是service对象，而是这个的代理对象！！ 通过这个代理对象去调用了service的具体方法，所以事务生效了！
+        //核心一句话：Spring事务是否生效，取决于：有没有通过代理对象去调用，事务传播行为只有在走代理的情况下才生效
+        Result voucherOrder;
+        try {
             IVoucherOrderService proxy = (IVoucherOrderService) AopContext.currentProxy();
             return proxy.createVoucherOrder(voucherId);
+        } finally {
+            //这个释放锁的操作，最好这样写在finally中！！
+            voucherOrderLock.unlock();
         }
     }
 
