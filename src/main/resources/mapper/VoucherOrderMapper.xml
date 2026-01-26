@@ -12,4 +12,8 @@
         <if test="status != null">#{status},</if>
         #{payTime}, #{useTime}, #{refundTime})
     </insert>
+    <select id="queryVoucherOrderByUserId"  resultType="java.lang.Integer">
+        select 1 from tb_voucher_order where user_id = #{userId} and voucher_id = #{voucherId} and status = 1 limit 1
+
+    </select>
 </mapper>
