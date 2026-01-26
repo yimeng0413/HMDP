@@ -14,4 +14,5 @@ public interface IVoucherOrderService {
 
     public Result purchaseSeckillVoucher(Long voucherId);
 
+    Result createVoucherOrder(Long voucherId);
 }

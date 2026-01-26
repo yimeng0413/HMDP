@@ -12,6 +12,8 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
  */
 public interface VoucherOrderMapper {
 
-    int createVoucherOrder(VoucherOrder voucherOrder);
+    Integer createVoucherOrder(VoucherOrder voucherOrder);
+
+    Integer queryVoucherOrderByUserId(Long userId,Long voucherId);
 
 }
