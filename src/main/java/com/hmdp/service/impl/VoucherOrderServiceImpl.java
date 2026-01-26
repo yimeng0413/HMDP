@@ -90,7 +90,6 @@ public class VoucherOrderServiceImpl implements IVoucherOrderService {
         //普通我们是在service某个方法上写@Transactional，然后Controller层直接调service的这个方法，这个时候事务是生效的，为啥？
         //因为注入到Controller层的不是service对象，而是这个的代理对象！！ 通过这个代理对象去调用了service的具体方法，所以事务生效了！
         //核心一句话：Spring事务是否生效，取决于：有没有通过代理对象去调用，事务传播行为只有在走代理的情况下才生效
-        Result voucherOrder;
         try {
             IVoucherOrderService proxy = (IVoucherOrderService) AopContext.currentProxy();
             return proxy.createVoucherOrder(voucherId);
